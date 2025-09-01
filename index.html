@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kidvestor</title>
+    <meta name="description" content="Kid-friendly paper trading and lessons" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; background: #0b1020; color: #e8ebff; }
+      .card { background: #121a36; border: 1px solid #223060; border-radius: 16px; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+      .btn { padding: 8px 12px; border-radius: 10px; border: 1px solid #2b3b78; background: #1a2350; color: #e8ebff; cursor: pointer; }
+      .btn:hover { filter: brightness(1.1); }
+      .tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+      .tab { padding: 6px 10px; border-radius: 999px; border: 1px solid #2b3b78; cursor: pointer; }
+      .tab.active { background: #2a3aa2; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 8px; border-bottom: 1px solid #223060; text-align: left; }
+      .green { color: #49e689; }
+      .red { color: #ff6b6b; }
+      .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+      @media (min-width: 960px) { .grid { grid-template-columns: 2fr 1fr; } }
+      .badge { background:#2a3aa2; padding:4px 8px; border-radius: 8px; font-size: 12px; border:1px solid #2b3b78; }
+      .header { display:flex; justify-content:space-between; align-items:center; padding:16px; }
+      .brand { display:flex; align-items:center; gap:10px; }
+      .logo { width:40px; height:40px; display:grid; place-items:center; background:#2a3aa2; border-radius:12px; font-weight:800; }
+      a { color:#9bb3ff; }
+      .small { font-size:12px; opacity:0.8; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
