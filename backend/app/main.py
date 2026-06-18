@@ -89,6 +89,15 @@ class BacktestBar(BaseModel):
     volume: float = 0.0
 
 
+class TradingViewAlert(BaseModel):
+    """Alert payload posted by a TradingView webhook (your Pine Script)."""
+    side: str                       # "LONG"/"SHORT" (or buy/sell)
+    entry: float
+    stop: float | None = None
+    target: float | None = None
+    secret: str | None = None       # optional shared secret check
+
+
 # ----------------------------------------------------------------- routes
 @app.get("/api/health")
 async def health():
@@ -171,6 +180,22 @@ async def backtest(bars: list[BacktestBar]):
     ]
     result = await engine.replay_bars(parsed)
     engine.set_auto_trade(prev_auto)
+    return result
+
+
+@app.post("/api/webhook/tradingview")
+async def tradingview_webhook(alert: TradingViewAlert):
+    """Receive a signal from the Pine Script (via TradingView alert webhook),
+    log it, and route execution through the configured broker (TradersPost for
+    Lucid). This lets the original indicator be the signal source — no live
+    market-data feed required on our side.
+    """
+    side = alert.side.strip().upper()
+    side = {"BUY": "LONG", "SELL": "SHORT"}.get(side, side)
+    result = await engine.submit_external_signal(
+        side=side, entry=alert.entry, stop=alert.stop, target=alert.target,
+    )
+    await manager.broadcast({"type": "state", "data": engine.state()})
     return result
 
 

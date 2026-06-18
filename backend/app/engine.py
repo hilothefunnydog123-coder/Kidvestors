@@ -23,6 +23,7 @@ from .database import Trade, session_scope
 from .strategy.orb import Bar, ORBStrategy, Signal, StrategyConfig
 from .tradovate.client import TradovateClient, TradovateError
 from .tradovate.marketdata import MarketDataClient
+from .traderspost import TradersPostClient, TradersPostError
 
 log = logging.getLogger("engine")
 
@@ -48,6 +49,7 @@ class TradingEngine:
         self.broadcast = broadcast
         self.strategy = ORBStrategy(settings.symbol, self._strategy_config())
         self.client = TradovateClient(settings)
+        self.traderspost = TradersPostClient(settings.traderspost_webhook_url)
         self.md: MarketDataClient | None = None
         self._md_task: asyncio.Task | None = None
         self.position: OpenPosition | None = None
@@ -73,6 +75,19 @@ class TradingEngine:
         if self.running:
             return self.state()
         self.last_error = None
+
+        # TradersPost route (e.g. Lucid): no broker API key / data feed needed —
+        # signals arrive via the /api/webhook/tradingview receiver. We just go
+        # "ready" and wait for webhooks (or internal engine if a feed is added).
+        if self.s.broker == "traderspost":
+            self.running = True
+            self.connection = "webhook-ready"
+            if not self.traderspost.configured:
+                self.last_error = "TradersPost webhook URL not set (.env)."
+            await self._emit()
+            return self.state()
+
+        # Tradovate route: authenticate + stream market data into the engine.
         try:
             await self.client.authenticate()
             self.account_info = await self.client.get_cash_balance()
@@ -102,8 +117,12 @@ class TradingEngine:
     async def kill_switch(self) -> dict:
         """Flatten any open position immediately and stop trading."""
         try:
-            await self.client.flatten(self.s.symbol)
-        except TradovateError as e:
+            if self.s.broker == "traderspost":
+                if self.traderspost.configured:
+                    await self.traderspost.exit_position(self.s.exec_ticker)
+            else:
+                await self.client.flatten(self.s.symbol)
+        except (TradovateError, TradersPostError) as e:
             self.last_error = str(e)
         if self.position:
             await self._close_trade(self.position, self.position.entry, "FLATTENED",
@@ -138,17 +157,24 @@ class TradingEngine:
 
         await self._emit(bar=bar)
 
-    async def _open_trade(self, signal: Signal, bar: Bar) -> None:
+    async def _open_trade(self, signal: Signal, bar: Bar | None) -> None:
         qty = self.s.quantity
         live = False
         if self.auto_trade:
             try:
-                await self.client.place_bracket(
-                    side=signal.side, entry=signal.entry, stop=signal.stop,
-                    target=signal.target, qty=qty, symbol=self.s.symbol,
-                )
+                if self.s.broker == "traderspost":
+                    await self.traderspost.send_bracket(
+                        side=signal.side, ticker=self.s.exec_ticker, qty=qty,
+                        target=signal.target, stop=signal.stop,
+                        signal_price=signal.entry,
+                    )
+                else:
+                    await self.client.place_bracket(
+                        side=signal.side, entry=signal.entry, stop=signal.stop,
+                        target=signal.target, qty=qty, symbol=self.s.symbol,
+                    )
                 live = True
-            except TradovateError as e:
+            except (TradovateError, TradersPostError) as e:
                 self.last_error = f"Order failed: {e}"
                 log.error(self.last_error)
 
@@ -170,6 +196,38 @@ class TradingEngine:
             "side": signal.side, "entry": signal.entry, "stop": signal.stop,
             "target": signal.target, "ts": signal.bar_ts.isoformat(), "live": live,
         }})
+
+    async def submit_external_signal(
+        self, *, side: str, entry: float, stop: float | None = None,
+        target: float | None = None,
+    ) -> dict:
+        """Open a trade from an external signal (e.g. a TradingView alert).
+
+        Lets the bot use the original Pine Script as the signal source while we
+        handle execution (TradersPost/Tradovate), logging, and analytics.
+        """
+        side = side.upper()
+        if side not in ("LONG", "SHORT"):
+            return {"ok": False, "error": f"invalid side {side!r}"}
+        if self.position is not None:
+            return {"ok": False, "error": "position already open"}
+
+        cfg = self.strategy.cfg
+        if stop is None:
+            stop = entry - cfg.stop_pts if side == "LONG" else entry + cfg.stop_pts
+        if target is None:
+            target = entry + cfg.tp_pts if side == "LONG" else entry - cfg.tp_pts
+        risk = abs(entry - stop)
+        r1 = entry + risk if side == "LONG" else entry - risk
+
+        signal = Signal(
+            side=side, entry=entry, stop=stop, target=target, r1=r1,
+            bar_ts=datetime.now(timezone.utc), symbol=self.s.symbol,
+            reason="TradingView webhook",
+        )
+        await self._open_trade(signal, None)
+        await self._emit()
+        return {"ok": True, "trade_id": self.position.trade_id if self.position else None}
 
     async def _manage(self, bar: Bar) -> None:
         pos = self.position
@@ -257,6 +315,8 @@ class TradingEngine:
             "connection": self.connection,
             "env": self.s.tradovate_env,
             "symbol": self.s.symbol,
+            "broker": self.s.broker,
+            "execution_ready": self.s.execution_ready,
             "credentials_present": self.s.credentials_present,
             "account": {
                 "name": self.client.account.name if self.client.account else None,

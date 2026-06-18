@@ -62,6 +62,14 @@ class Settings(BaseSettings):
 
     # Execution
     auto_trade: bool = False
+    # Which broker route to execute through: "tradovate" (direct API key) or
+    # "traderspost" (webhook bridge — works with Lucid and other prop firms
+    # without a broker API key).
+    broker: str = "tradovate"
+    traderspost_webhook_url: str = ""
+    # Ticker as your TradersPost broker connection expects it (futures often
+    # differ from the Tradovate symbol). Falls back to SYMBOL if blank.
+    traderspost_ticker: str = ""
 
     # Server
     host: str = "0.0.0.0"
@@ -82,6 +90,17 @@ class Settings(BaseSettings):
     @property
     def credentials_present(self) -> bool:
         return bool(self.tradovate_username and self.tradovate_password and self.tradovate_cid)
+
+    @property
+    def exec_ticker(self) -> str:
+        return self.traderspost_ticker or self.symbol
+
+    @property
+    def execution_ready(self) -> bool:
+        """Whether the chosen execution route is configured."""
+        if self.broker == "traderspost":
+            return bool(self.traderspost_webhook_url)
+        return self.credentials_present
 
 
 @lru_cache
