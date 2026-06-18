@@ -24,6 +24,7 @@ from .strategy.orb import Bar, ORBStrategy, Signal, StrategyConfig
 from .tradovate.client import TradovateClient, TradovateError
 from .tradovate.marketdata import MarketDataClient
 from .traderspost import TradersPostClient, TradersPostError
+from .datafeed.yahoo import YahooFeed
 
 log = logging.getLogger("engine")
 
@@ -51,6 +52,7 @@ class TradingEngine:
         self.client = TradovateClient(settings)
         self.traderspost = TradersPostClient(settings.traderspost_webhook_url)
         self.md: MarketDataClient | None = None
+        self.yahoo: YahooFeed | None = None
         self._md_task: asyncio.Task | None = None
         self.position: OpenPosition | None = None
 
@@ -76,30 +78,34 @@ class TradingEngine:
             return self.state()
         self.last_error = None
 
-        # TradersPost route (e.g. Lucid): no broker API key / data feed needed —
-        # signals arrive via the /api/webhook/tradingview receiver. We just go
-        # "ready" and wait for webhooks (or internal engine if a feed is added).
-        if self.s.broker == "traderspost":
-            self.running = True
+        # Authenticate Tradovate only if it's needed for execution or data.
+        if self.s.broker == "tradovate" or self.s.data_feed == "tradovate":
+            try:
+                await self.client.authenticate()
+                self.account_info = await self.client.get_cash_balance()
+            except TradovateError as e:
+                self.last_error = str(e)
+                log.warning("Tradovate auth failed: %s", e)
+                await self._emit()
+                return self.state()
+
+        # Start the market-data feed that drives the strategy engine.
+        if self.s.data_feed == "yahoo":
+            self.yahoo = YahooFeed(self.s.feed_symbol, self._on_bar, self._on_status)
+            self._md_task = asyncio.create_task(self.yahoo.run())
+            self.connection = "connecting"
+            log.info("Yahoo feed started for %s -> signals route to %s",
+                     self.s.feed_symbol, self.s.broker)
+        elif self.s.data_feed == "tradovate":
+            token = self.client.md_token or ""
+            self.md = MarketDataClient(self.s, token, self._on_bar, self._on_status)
+            self._md_task = asyncio.create_task(self.md.run())
+        else:
+            # No internal feed: signals arrive via the TradingView webhook.
             self.connection = "webhook-ready"
-            if not self.traderspost.configured:
+            if self.s.broker == "traderspost" and not self.traderspost.configured:
                 self.last_error = "TradersPost webhook URL not set (.env)."
-            await self._emit()
-            return self.state()
 
-        # Tradovate route: authenticate + stream market data into the engine.
-        try:
-            await self.client.authenticate()
-            self.account_info = await self.client.get_cash_balance()
-        except TradovateError as e:
-            self.last_error = str(e)
-            log.warning("Start without broker auth: %s", e)
-            await self._emit()
-            return self.state()
-
-        token = self.client.md_token or ""
-        self.md = MarketDataClient(self.s, token, self._on_bar, self._on_status)
-        self._md_task = asyncio.create_task(self.md.run())
         self.running = True
         await self._emit()
         return self.state()
@@ -108,6 +114,8 @@ class TradingEngine:
         self.running = False
         if self.md:
             self.md.stop()
+        if self.yahoo:
+            self.yahoo.stop()
         if self._md_task:
             self._md_task.cancel()
         self.connection = "stopped"

@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     point_value: float = 2.0
     quantity: int = 1
 
+    # Market-data feed that drives the backend strategy:
+    #   "yahoo"     = free Yahoo Finance (delayed ~10-15m; no key) — paper/validation
+    #   "tradovate" = Tradovate market-data WebSocket (needs Tradovate API key)
+    #   "none"      = no internal feed (signals arrive via TradingView webhook)
+    data_feed: str = "yahoo"
+    # Yahoo ticker for the feed (e.g. NQ=F drives MNQ). Falls back by symbol.
+    data_symbol: str = ""
+
     # Execution
     auto_trade: bool = False
     # Which broker route to execute through: "tradovate" (direct API key) or
@@ -94,6 +102,15 @@ class Settings(BaseSettings):
     @property
     def exec_ticker(self) -> str:
         return self.traderspost_ticker or self.symbol
+
+    @property
+    def feed_symbol(self) -> str:
+        if self.data_symbol:
+            return self.data_symbol
+        # Sensible default: map common micro/mini roots to a Yahoo continuous.
+        root = self.symbol[:3].upper()
+        return {"MNQ": "NQ=F", "NQ": "NQ=F", "MES": "ES=F", "ES": "ES=F",
+                "MGC": "GC=F", "GC": "GC=F", "MCL": "CL=F", "CL": "CL=F"}.get(root, "NQ=F")
 
     @property
     def execution_ready(self) -> bool:
