@@ -1,5 +1,5 @@
 {
-  "name": "kidvestor",
+  "name": "yn-orb-dashboard",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lightweight-charts": "^4.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "lightweight-charts": "^4.1.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
